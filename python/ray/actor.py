@@ -1132,7 +1132,9 @@ class ActorClass:
                 "max_concurrency": meta.concurrency_groups[cg_name],
                 "function_descriptors": [],
             }
-
+        # should print here yihao
+        from pprint import pprint
+        pprint(concurrency_groups_dict)
         # Update methods
         for method_name in meta.method_meta.concurrency_group_for_methods:
             cg_name = meta.method_meta.concurrency_group_for_methods[method_name]

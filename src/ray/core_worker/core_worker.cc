@@ -2329,6 +2329,7 @@ Status CoreWorker::CreateActor(const RayFunction &function,
   } else if (!worker_context_.GetRootDetachedActorID().IsNil()) {
     root_detached_actor_id = worker_context_.GetRootDetachedActorID();
   }
+  // yihao builder here 
   builder.SetActorCreationTaskSpec(actor_id,
                                    serialized_actor_handle,
                                    actor_creation_options.scheduling_strategy,
@@ -2532,6 +2533,7 @@ Status CoreWorker::SubmitActorTask(
 
   // The depth of the actor task is depth of the caller + 1
   // The caller is not necessarily the creator of the actor.
+  
   int64_t depth = worker_context_.GetTaskDepth() + 1;
   BuildCommonTaskSpec(builder,
                       actor_handle->CreationJobID(),
@@ -3025,6 +3027,8 @@ Status CoreWorker::ExecuteTask(
     defined_concurrency_groups = task_spec.ConcurrencyGroups();
   } else if (task_spec.IsActorTask()) {
     name_of_concurrency_group_to_execute = task_spec.ConcurrencyGroupName();
+    RAY_LOG(INFO) << name_of_concurrency_group_to_execute << "is  YIHAO name_of_concurrency_group_to_execute";
+
   }
   status = options_.task_execution_callback(
       task_spec.CallerAddress(),

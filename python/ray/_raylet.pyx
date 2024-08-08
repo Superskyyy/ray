@@ -4761,16 +4761,19 @@ cdef class CoreWorker:
     def reset_event_loop_executor(self, executor: ThreadPoolExecutor):
         self.event_loop_executor = executor
 
+    # YIHA critical code here
     def get_event_loop(self, function_descriptor, specified_cgname):
         # __init__ will be invoked in default eventloop
         if function_descriptor.function_name == "__init__":
             return self.eventloop_for_default_cg, self.thread_for_default_cg
-
+        print(f'YIHAO specified cgname {specified_cgname}')
         if specified_cgname is not None:
             if specified_cgname in self.cgname_to_eventloop_dict:
+                print(f'{specified_cgname} is inside eventloopdict which is {self.cgname_to_eventloop_dict}')
                 this_group = self.cgname_to_eventloop_dict[specified_cgname]
                 return (this_group["eventloop"], this_group["thread"])
-
+        print(f'YIHAO function_descriptor is {function_descriptor} is in or not {self.fd_to_cgname_dict}')
+        print(f'curr_cgname is {curr_cgname}m is in or not {self.cgname_to_eventloop_dict})
         if function_descriptor in self.fd_to_cgname_dict:
             curr_cgname = self.fd_to_cgname_dict[function_descriptor]
             if curr_cgname in self.cgname_to_eventloop_dict:
@@ -4782,7 +4785,7 @@ cdef class CoreWorker:
                     "The function {} is defined to be executed "
                     "in the concurrency group {} . But there is no this group."
                     .format(function_descriptor, curr_cgname))
-
+        print(f'YIHAO return value from `get_event_loop` is self.eventloop_for_default_cg, self.thread_for_default_cg {self.eventloop_for_default_cg, self.thread_for_default_cg})
         return self.eventloop_for_default_cg, self.thread_for_default_cg
 
     def run_async_func_or_coro_in_event_loop(
