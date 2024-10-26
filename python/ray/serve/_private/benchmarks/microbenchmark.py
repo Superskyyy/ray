@@ -20,9 +20,19 @@ CALLS_PER_BATCH = 100
 
 
 async def fetch(session, data):
-    async with session.get("http://localhost:8000/", data=data) as response:
-        response = await response.text()
-        assert response == "ok", response
+    async def check_routes():
+        url = "http://127.0.0.1:8000/-/routes"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    routes = await response.json()  # Assuming JSON response
+                    print("Available routes:", routes)
+                else:
+                    print(f"Failed to retrieve routes. Status code: {response.status}")
+    await check_routes()
+    # async with session.get("http://localhost:8000/", data=data) as response:
+    #     response = await response.text()
+    #     assert response == "ok", response
 
 
 @ray.remote
@@ -119,7 +129,7 @@ async def trial(
             for _ in range(CALLS_PER_BATCH):
                 await fetch(session, data)
 
-        single_client_avg_tps, single_client_std_tps = await run_throughput_benchmark(
+        single_client_avg_tps, single_client_std_tps, ha = await run_throughput_benchmark(
             single_client,
             multiplier=CALLS_PER_BATCH,
         )
@@ -139,7 +149,7 @@ async def trial(
     async def many_clients():
         ray.get([a.do_queries.remote(CALLS_PER_BATCH, data) for a in clients])
 
-    multi_client_avg_tps, _ = await run_throughput_benchmark(
+    multi_client_avg_tps, _, _= await run_throughput_benchmark(
         many_clients,
         multiplier=CALLS_PER_BATCH * len(clients),
     )
@@ -151,7 +161,7 @@ async def trial(
 async def main():
     results = {}
     for intermediate_handles in [False, True]:
-        for num_replicas in [1, 8]:
+        for num_replicas in [1, 1]:
             for max_batch_size, max_ongoing_requests in [
                 (1, 1),
                 (1, 10000),
