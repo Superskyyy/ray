@@ -8,6 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from functools import partial
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Type
+from socketify import ASGI
 
 import grpc
 import starlette
@@ -154,7 +155,9 @@ class GenericProxy(ABC):
         proxy_router_class: Type[ProxyRouter],
         request_timeout_s: Optional[float] = None,
         get_handle_override: Optional[Callable] = None,
-    ):
+    ): 
+        self.total_latency = []
+        self.request_counter_num = 0
         self.request_timeout_s = request_timeout_s
         if self.request_timeout_s is not None and self.request_timeout_s < 0:
             self.request_timeout_s = None
@@ -441,21 +444,64 @@ class GenericProxy(ABC):
         """
         assert proxy_request.request_type in {"http", "websocket", "grpc"}
 
+        start_response_handler_info = time.time()
         response_handler_info = self._get_response_handler_info(proxy_request)
-
-        start_time = time.time()
+        #print(time.time() - start_response_handler_info)  ^ above is extremely fast 2.4318695068359375e-05ms
+        # For routes with predictable responses, yield directly to bypass conversions.
+        # if proxy_request.route_path == "/" and proxy_request.method == "GET":
+        #     yield {
+        #         "type": "http.response.start",
+        #         "status": 200,
+        #         "headers": [(b"content-type", b"text/plain")],
+        #     }
+        #     yield {"type": "http.response.body", "body": b"ok"}
+        #     yield ResponseStatus(code="200", is_error=False)
+        #     return
         if response_handler_info.should_increment_ongoing_requests:
             self._ongoing_requests_start()
 
         try:
             # The final message yielded must always be the `ResponseStatus`.
             status: Optional[ResponseStatus] = None
+            loop_start_time = time.time()  # Time before entering async for loop
+            loop_durations = []  # Track each iteration's duration
+            yield_counter = 0
+            start_time = time.time()
+
+            setup_start_time = time.time()
             async for message in response_handler_info.response_generator:
+                print(f"Initial setup time before first yield: {(time.time() - setup_start_time) * 1000:.3f} ms")
+                # Proceed with existing profiling for each yield  # This step takes 4.6ms already ^^
+
+                iteration_start_time = time.time()
+                yield_counter += 1  # At first yeikld is alreayd 4.366ms taken?
                 if isinstance(message, ResponseStatus):
                     status = message
+                print(f'outer messasge {message}')
+                if isinstance(message, ResponseStatus):
+                    status_start = time.time()
+                    print(f"Processing final ResponseStatus: {message}")
+                    yield message
+                    print(f"ResponseStatus processing time: {(time.time() - status_start) * 1000:.4f} ms")
+                    continue
 
                 yield message
-
+                iteration_duration = time.time() - iteration_start_time
+                loop_durations.append(iteration_duration)  # Append the duration of this iteration
+                total_loop_duration = time.time() - loop_start_time
+                print(f"Total async at count {yield_counter} for loop duration: {total_loop_duration * 1000:.3f} ms, with X yields = {yield_counter}")
+            print(f'loop durations, {loop_durations}')
+            print(f"Avg iteration duration in async for loop: {sum(loop_durations) / len(loop_durations) * 1000:.3f} ms")
+            time.sleep(9999)
+            
+            latency_ms = (time.time() - start_time) * 1000.0
+            # print(f'YIHAO CRITICAL LATENCY MS = {latency_ms}')
+            self.total_latency.append(latency_ms)
+            self.request_counter_num += 1
+            if self.request_counter_num == 1000:
+                # print(self.total_latency)
+                # YIHAO:: ITS ABOUT 5ms here
+                print(sum(self.total_latency)/1000)
             assert status is not None and isinstance(status, ResponseStatus)
         finally:
             # If anything during the request failed, we still want to ensure the ongoing
@@ -463,7 +509,6 @@ class GenericProxy(ABC):
             if response_handler_info.should_increment_ongoing_requests:
                 self._ongoing_requests_end()
 
-        latency_ms = (time.time() - start_time) * 1000.0
         if response_handler_info.should_record_access_log:
             logger.info(
                 access_log_msg(
@@ -945,6 +990,7 @@ class HTTPProxy(GenericProxy):
 
         return arg
 
+    # It is fast, but the generator is extremly slow 5ms
     async def send_request_to_replica(
         self,
         request_id: str,
@@ -958,6 +1004,8 @@ class HTTPProxy(GenericProxy):
         The yielded values will be ASGI messages until the final one, which will be
         the status code.
         """
+        loop_start_time = time.time()
+
         if app_is_cross_language:
             handle_arg = await self._format_handle_arg_for_java(proxy_request)
             # Response is returned as raw bytes, convert it to ASGI messages.
@@ -978,6 +1026,7 @@ class HTTPProxy(GenericProxy):
         proxy_asgi_receive_task = get_or_create_event_loop().create_task(
             self.proxy_asgi_receive(proxy_request.receive, receive_queue)
         )
+        # CRITICAL
 
         response_generator = ProxyResponseGenerator(
             handle.remote(handle_arg),
@@ -989,11 +1038,23 @@ class HTTPProxy(GenericProxy):
         status: Optional[ResponseStatus] = None
         response_started = False
         expecting_trailers = False
+        yield_counter = 0
+
         try:
+            # Start timer for the total async for loop
+            total_yield_time = 0
+            total_batch_time = 0
+            batch_times = []
+            yield_times = []
+            # Extremely slow part YIHAO
             async for asgi_message_batch in response_generator:
                 # See the ASGI spec for message details:
                 # https://asgi.readthedocs.io/en/latest/specs/www.html.
+                # Measure time taken to fetch the batch
+                batch_start_time = time.time()
                 for asgi_message in asgi_message_batch:
+                    message_start_time = time.time()
+
                     if asgi_message["type"] == "http.response.start":
                         # HTTP responses begin with exactly one
                         # "http.response.start" message containing the "status"
@@ -1030,9 +1091,40 @@ class HTTPProxy(GenericProxy):
                             is_error=False,
                         )
                         response_generator.stop_checking_for_disconnect()
+                    # Measure yield time for each message
+                    yield_start_time = time.time()
+                    yield_counter += 1
+                    print(f'halo - {yield_counter}')
 
+                    print(asgi_message)
                     yield asgi_message
+                    if yield_counter == 2:
+                        # Track total async for duration
+                        total_loop_time = time.time() - loop_start_time
+                        # Print detailed profiling information
+                        print(f"Total1 async for loop duration: {total_loop_time:.4f} ms")
                     response_started = True
+                    yield_duration = time.time() - yield_start_time
+                    yield_times.append(yield_duration)
+                    total_yield_time += yield_duration
+
+
+                # Calculate batch processing time
+                batch_duration = time.time() - batch_start_time
+                batch_times.append(batch_duration)
+                total_batch_time += batch_duration
+
+
+                if yield_counter == 3:
+                    # Track total async for duration
+                    total_loop_time = time.time() - loop_start_time
+                    # Print detailed profiling information
+                    print(f"Total async for loop duration: {total_loop_time:.4f} ms")
+                    print(f"Total time spent fetching batches: {total_batch_time:.4f} ms")
+                    print(f"Average batch processing time: {sum(batch_times) / len(batch_times):.4f} ms")
+                    print(f"Total yield time: {total_yield_time:.4f} ms")
+                    print(f"Average yield time: {sum(yield_times) / len(yield_times):.4f} ms")
+                    time.sleep(9999)
         except TimeoutError:
             status = ResponseStatus(
                 code=TIMEOUT_ERROR_CODE,
@@ -1110,7 +1202,12 @@ class HTTPProxy(GenericProxy):
 
         # The status code should always be set.
         assert status is not None
+        # Track total async for duration
+        # Print detailed profiling information
         yield status
+        total_loop_time = time.time() - loop_start_time
+
+        print(f"Total2 async for loop duration: {total_loop_time:.4f} ms")
 
 
 class RequestIdMiddleware:
@@ -1376,7 +1473,13 @@ class ProxyActor:
                 f"Failed to bind Ray Serve HTTP proxy to '{self.host}:{self.port}'. "
                 "Please make sure your http-host and http-port are specified correctly."
             )
+        from fastapi import FastAPI
+        fastapi_app = FastAPI()
+        from fastapi.responses import PlainTextResponse
 
+        @fastapi_app.get("/", response_class=PlainTextResponse)
+        async def root():
+            return "ok"
         # NOTE: We have to use lower level uvicorn Config and Server
         # class because we want to run the server as a coroutine. The only
         # alternative is to call uvicorn.run which is blocking.
@@ -1405,6 +1508,26 @@ class ProxyActor:
 
         self.http_setup_complete.set()
         await self._uvicorn_server.serve(sockets=[sock])
+    async def run_http_server2(self):
+        from fastapi import FastAPI
+        fastapi_app = FastAPI()
+        from fastapi.responses import PlainTextResponse
+
+        @fastapi_app.get("/", response_class=PlainTextResponse)
+        async def root():
+            return "ok"
+
+        app = ASGI(fastapi_app)#self.wrapped_http_proxy)
+        print(f'running listen YYHH') 
+        print(f'running on {self.host} {self.port}')
+        # Step 3: Start listening on the specified host and port
+        app.listen(8000)
+
+        # Indicate that the HTTP setup is complete
+
+        # Step 4: Run the app in an asyncio loop, equivalent to uvicorn's server loop
+        app.run(block=False)
+        self.http_setup_complete.set()
 
     async def run_grpc_server(self):
         if not self.should_start_grpc_service():

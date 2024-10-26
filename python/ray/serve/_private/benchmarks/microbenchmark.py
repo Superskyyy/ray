@@ -20,19 +20,9 @@ CALLS_PER_BATCH = 100
 
 
 async def fetch(session, data):
-    async def check_routes():
-        url = "http://127.0.0.1:8000/-/routes"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    routes = await response.json()  # Assuming JSON response
-                    print("Available routes:", routes)
-                else:
-                    print(f"Failed to retrieve routes. Status code: {response.status}")
-    await check_routes()
-    # async with session.get("http://localhost:8000/", data=data) as response:
-    #     response = await response.text()
-    #     assert response == "ok", response
+    async with session.get("http://localhost:8000/", data=data) as response:
+        response = await response.text()
+        assert response == "ok", response
 
 
 @ray.remote
@@ -115,6 +105,9 @@ async def trial(
         intermediate_handles, num_replicas, max_batch_size, max_ongoing_requests
     )
     serve.run(app)
+    # import time
+    # print(f'blocking here yiuh')
+    # time.sleep(99999)
 
     if data_size == "small":
         data = None
@@ -160,12 +153,12 @@ async def trial(
 
 async def main():
     results = {}
-    for intermediate_handles in [False, True]:
-        for num_replicas in [1, 1]:
+    for intermediate_handles in [False]:
+        for num_replicas in [1]:
             for max_batch_size, max_ongoing_requests in [
                 (1, 1),
-                (1, 10000),
-                (10000, 10000),
+                # (1, 10000),
+                # (10000, 10000),
             ]:
                 # TODO(edoakes): large data causes broken pipe errors.
                 for data_size in ["small"]:
@@ -178,6 +171,7 @@ async def main():
                             data_size,
                         )
                     )
+                    break
 
     print("Results from all conditions:")
     pprint(results)
