@@ -372,6 +372,7 @@ class GenericProxy(ABC):
     def _get_response_handler_info(
         self, proxy_request: ProxyRequest
     ) -> ResponseHandlerInfo:
+        time_start = time.time()
         if proxy_request.is_health_request or proxy_request.is_route_request:
             return self._get_health_or_routes_reponse(proxy_request)
 
@@ -415,7 +416,7 @@ class GenericProxy(ABC):
                 proxy_request=proxy_request,
                 internal_request_id=internal_request_id,
             )
-
+            # print(f'time taken to setup info is {time.time() - time_start}ms')
             response_generator = self.send_request_to_replica(
                 request_id=request_id,
                 internal_request_id=internal_request_id,
@@ -470,29 +471,29 @@ class GenericProxy(ABC):
 
             setup_start_time = time.time()
             async for message in response_handler_info.response_generator:
-                print(f"Initial setup time before first yield: {(time.time() - setup_start_time) * 1000:.3f} ms")
+                # print(f"Initial setup time before first yield: {(time.time() - setup_start_time) * 1000:.3f} ms")
                 # Proceed with existing profiling for each yield  # This step takes 4.6ms already ^^
 
                 iteration_start_time = time.time()
                 yield_counter += 1  # At first yeikld is alreayd 4.366ms taken?
                 if isinstance(message, ResponseStatus):
                     status = message
-                print(f'outer messasge {message}')
-                if isinstance(message, ResponseStatus):
-                    status_start = time.time()
-                    print(f"Processing final ResponseStatus: {message}")
-                    yield message
-                    print(f"ResponseStatus processing time: {(time.time() - status_start) * 1000:.4f} ms")
-                    continue
+                # print(f'outer messasge {message}')
+                # if isinstance(message, ResponseStatus):
+                #     status_start = time.time()
+                #     print(f"Processing final ResponseStatus: {message}")
+                #     yield message
+                #     print(f"ResponseStatus processing time: {(time.time() - status_start) * 1000:.4f} ms")
+                #     continue
 
                 yield message
-                iteration_duration = time.time() - iteration_start_time
-                loop_durations.append(iteration_duration)  # Append the duration of this iteration
-                total_loop_duration = time.time() - loop_start_time
-                print(f"Total async at count {yield_counter} for loop duration: {total_loop_duration * 1000:.3f} ms, with X yields = {yield_counter}")
-            print(f'loop durations, {loop_durations}')
-            print(f"Avg iteration duration in async for loop: {sum(loop_durations) / len(loop_durations) * 1000:.3f} ms")
-            time.sleep(9999)
+            #     iteration_duration = time.time() - iteration_start_time
+            #     loop_durations.append(iteration_duration)  # Append the duration of this iteration
+            #     total_loop_duration = time.time() - loop_start_time
+            #     print(f"Total async at count {yield_counter} for loop duration: {total_loop_duration * 1000:.3f} ms, with X yields = {yield_counter}")
+            # print(f'loop durations, {loop_durations}')
+            # print(f"Avg iteration duration in async for loop: {sum(loop_durations) / len(loop_durations) * 1000:.3f} ms")
+            # time.sleep(9999)
             
             latency_ms = (time.time() - start_time) * 1000.0
             # print(f'YIHAO CRITICAL LATENCY MS = {latency_ms}')
@@ -1028,12 +1029,18 @@ class HTTPProxy(GenericProxy):
         )
         # CRITICAL
 
+        # setup_start_time = time.time()
+
         response_generator = ProxyResponseGenerator(
             handle.remote(handle_arg),
             timeout_s=self.request_timeout_s,
             disconnected_task=proxy_asgi_receive_task,
             result_callback=result_callback,
         )
+
+        # setup_total_time = time.time() - setup_start_time
+        # print(f"Time to initialize response_generator and execute handle.remote: {setup_total_time:.4f} ms")
+
 
         status: Optional[ResponseStatus] = None
         response_started = False
@@ -1094,15 +1101,15 @@ class HTTPProxy(GenericProxy):
                     # Measure yield time for each message
                     yield_start_time = time.time()
                     yield_counter += 1
-                    print(f'halo - {yield_counter}')
+                    # print(f'halo - {yield_counter}')
 
-                    print(asgi_message)
+                    # print(asgi_message)
                     yield asgi_message
-                    if yield_counter == 2:
-                        # Track total async for duration
-                        total_loop_time = time.time() - loop_start_time
-                        # Print detailed profiling information
-                        print(f"Total1 async for loop duration: {total_loop_time:.4f} ms")
+                    # if yield_counter == 2:
+                    #     # Track total async for duration
+                    #     total_loop_time = time.time() - loop_start_time
+                    #     # Print detailed profiling information
+                    #     print(f"Total1 async for loop duration: {total_loop_time:.4f} ms")
                     response_started = True
                     yield_duration = time.time() - yield_start_time
                     yield_times.append(yield_duration)
@@ -1115,16 +1122,16 @@ class HTTPProxy(GenericProxy):
                 total_batch_time += batch_duration
 
 
-                if yield_counter == 3:
-                    # Track total async for duration
-                    total_loop_time = time.time() - loop_start_time
-                    # Print detailed profiling information
-                    print(f"Total async for loop duration: {total_loop_time:.4f} ms")
-                    print(f"Total time spent fetching batches: {total_batch_time:.4f} ms")
-                    print(f"Average batch processing time: {sum(batch_times) / len(batch_times):.4f} ms")
-                    print(f"Total yield time: {total_yield_time:.4f} ms")
-                    print(f"Average yield time: {sum(yield_times) / len(yield_times):.4f} ms")
-                    time.sleep(9999)
+                # if yield_counter == 3:
+                #     # Track total async for duration
+                #     total_loop_time = time.time() - loop_start_time
+                #     # Print detailed profiling information
+                #     print(f"Total async for loop duration: {total_loop_time:.4f} ms")
+                #     print(f"Total time spent fetching batches: {total_batch_time:.4f} ms")
+                #     print(f"Average batch processing time: {sum(batch_times) / len(batch_times):.4f} ms")
+                #     print(f"Total yield time: {total_yield_time:.4f} ms")
+                #     print(f"Average yield time: {sum(yield_times) / len(yield_times):.4f} ms")
+                #     time.sleep(9999)
         except TimeoutError:
             status = ResponseStatus(
                 code=TIMEOUT_ERROR_CODE,
@@ -1205,9 +1212,9 @@ class HTTPProxy(GenericProxy):
         # Track total async for duration
         # Print detailed profiling information
         yield status
-        total_loop_time = time.time() - loop_start_time
+        # total_loop_time = time.time() - loop_start_time
 
-        print(f"Total2 async for loop duration: {total_loop_time:.4f} ms")
+        # print(f"Total2 async for loop duration: {total_loop_time:.4f} ms")
 
 
 class RequestIdMiddleware:
